@@ -1,4 +1,4 @@
-# Sentry Instrumentation — a skill that teaches your AI coding agent how to measure your app properly
+# Sentry Instrumentation
 
 > Your AI agent adds Sentry metrics the right way on the first try —
 > so a year from now, when someone asks "is the app actually working?",
@@ -10,7 +10,7 @@ Codex · Aider · Continue · Windsurf
 
 ---
 
-## Why this matters (the story)
+## Why this matters
 
 Picture this. You build something good. It gets traction. Six months
 later, a real enterprise customer shows up and says:
