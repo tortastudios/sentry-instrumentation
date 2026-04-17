@@ -5,7 +5,23 @@ model reads as context. The adapter pattern is to include a pointer
 to this skill in your `AGENTS.md`, plus the `SKILL.md` body inline
 for full context.
 
-## Install
+See also the root [`AGENTS.md`](../AGENTS.md) in this repo — when Codex
+is pointed at the skill repo itself, that's the file it reads first.
+
+## Fast path
+
+From inside the cloned skill repo:
+
+```bash
+scripts/install.sh --agent=codex --project=/path/to/your/project
+```
+
+Idempotent — inserts a skill-enable block into the consumer project's
+`AGENTS.md` between `<!-- BEGIN sentry-instrumentation -->` and
+`<!-- END sentry-instrumentation -->` markers. Re-run after the skill
+updates and the block is refreshed in place.
+
+## Manual install
 
 From your project root:
 

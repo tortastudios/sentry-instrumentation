@@ -4,7 +4,10 @@ Windsurf (Codeium) uses `.windsurfrules` as always-on project
 context. The adapter shape is the same as Cursor's: concatenate
 `SKILL.md` plus four key references into a single rules file.
 
-## Install
+**Fast path:** `scripts/install.sh --agent=windsurf --project=<path>`
+from inside the cloned skill repo. Idempotent.
+
+## Manual install
 
 From your project root:
 
