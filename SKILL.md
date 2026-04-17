@@ -1,13 +1,15 @@
 ---
 name: sentry-instrumentation
-description: Rules and examples for adding Sentry metrics the right way. Covers how to name a counter, gauge, or duration metric; which tags are safe versus which will blow up your Sentry bill; how to track failures with a small fixed list of error types instead of raw exception strings; and how to add metrics around HTTP routes, external API calls, workflow steps, retry loops, and fallback paths without copy-pasting emit calls everywhere. Ships a CI check that blocks bad metrics before merge. Use this when someone asks to "instrument" code, "add a metric", "track duration", "count failures", "emit a counter/gauge/distribution", "add a span", "observe" a workflow step, or add a route, external API client, retry loop, or fallback path. Python reference examples included; the same shapes work in any language. Does NOT cover product analytics like button clicks or funnel events — those go in a separate PostHog skill.
+description: Rules and examples for adding Sentry metrics the right way. Covers how to name a counter, gauge, or duration metric; which tags are safe versus which will blow up your Sentry bill; how to track failures with a small fixed list of error types instead of raw exception strings; and how to add metrics around HTTP routes, external API calls, workflow steps, retry loops, and fallback paths without copy-pasting emit calls everywhere. Ships a CI check that blocks bad metrics before merge. Use this when someone asks to "instrument" code, "add a metric", "track duration", "count failures", "emit a counter/gauge/distribution", "add a span", "observe" a workflow step, or add a route, external API client, retry loop, or fallback path. Python reference examples included; the same shapes work in any language.
 ---
 
 # Sentry Instrumentation
 
-**Scope:** Sentry (system behavior) only. Product analytics (PostHog
-events) belong in the sibling `posthog-analytics` skill. If the change
-touches a user-facing funnel event, stop and pick the right skill.
+**Scope:** Sentry (system behavior) only. Product analytics metrics
+(button clicks, funnel events, feature-flag exposure) belong in your
+product-analytics tool — never mix them into Sentry instrumentation.
+If the change touches a user-facing funnel event, stop and use the
+right tool for it.
 
 **Canonical reference:** Python, under `examples/python/`. The rules
 in `references/` are language-neutral — ports to TypeScript, Go,
@@ -82,8 +84,8 @@ Invoke for any change that:
   behavior", "record timing", or "count failures".
 
 Do **not** invoke for product-analytics changes (button click counts,
-funnel events, feature-flag exposure). Those go to
-`posthog-analytics`.
+funnel events, feature-flag exposure). Those belong in your product-
+analytics tool, not in Sentry instrumentation.
 
 ## Decision rules
 
