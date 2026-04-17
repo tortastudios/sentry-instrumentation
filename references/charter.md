@@ -17,9 +17,9 @@ and how misuse is prevented by default.
 
 ## What's out of scope
 
-- **Product analytics** (PostHog events): button clicks, funnel
-  progression, feature-flag exposure. Use the sibling
-  `posthog-analytics` skill.
+- **Product analytics**: button clicks, funnel progression, feature-
+  flag exposure. These belong in your product-analytics tool (PostHog,
+  Amplitude, Mixpanel, etc.), not in Sentry instrumentation.
 - **Dashboards, alert rules, SLO thresholds, on-call policy**: these
   are downstream consumers of the metrics this skill defines. Clean
   instrumentation is a precondition; the dashboards themselves are
