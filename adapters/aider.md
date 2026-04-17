@@ -5,7 +5,10 @@ persistent context. The adapter is: include `SKILL.md` + the key
 references as a `CONVENTIONS.md` file and pass it on the command
 line.
 
-## Install
+**Fast path:** `scripts/install.sh --agent=aider --project=<path>` from
+inside the cloned skill repo. Idempotent.
+
+## Manual install
 
 From your project root:
 

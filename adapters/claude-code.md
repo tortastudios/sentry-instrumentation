@@ -3,6 +3,19 @@
 Claude Code auto-discovers skills via YAML frontmatter. Installation
 is a clone into the skills directory.
 
+## Fast path
+
+From inside the cloned skill repo:
+
+```bash
+scripts/install.sh --agent=claude-code                            # user-level
+scripts/install.sh --agent=claude-code --project=/path/to/project # project-level
+```
+
+Idempotent — symlinks the skill-clone into `~/.claude/skills/` (or
+`<project>/.claude/skills/`). If the symlink already points at the right
+target, it's a no-op. Equivalent to the manual `git clone` below.
+
 ## Install (user-level — available in every project)
 
 ```bash

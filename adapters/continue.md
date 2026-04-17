@@ -5,6 +5,10 @@ custom slash commands. The adapter uses both: `.continuerules` for
 always-on context, plus a `/sentry-instrument` slash command for
 explicit invocation.
 
+**Fast path:** `scripts/install.sh --agent=continue --project=<path>`
+from inside the cloned skill repo writes `.continuerules`. Idempotent.
+The custom slash command still needs a manual config edit — see below.
+
 ## Install (minimal — always-on)
 
 From your project root:

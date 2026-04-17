@@ -5,7 +5,18 @@ doesn't lazy-load, so the adapter concatenates `SKILL.md` plus four
 high-value references into a single rule file. That keeps context
 small while covering the ~80% of instrumentation questions.
 
-## Install
+## Fast path
+
+From inside the cloned skill repo:
+
+```bash
+scripts/install.sh --agent=cursor --project=/path/to/your/project
+```
+
+Idempotent — writes `<project>/.cursor/rules/sentry-instrumentation.mdc`
+each run, so upstream updates propagate with one command.
+
+## Manual install
 
 From your project root:
 

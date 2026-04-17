@@ -2,6 +2,12 @@
 
 One short install guide per agent. Pick yours, follow the steps.
 
+There is no cross-agent "skill registry" format — each agent uses its
+own discovery mechanism (see the table below). The root
+[`AGENTS.md`](../AGENTS.md) explains the model; the adapters below
+wire it up per agent. For most agents the one-command fast path is
+`scripts/install.sh --agent=<name> --project=<path>`.
+
 ## Agents
 
 | Agent | Guide | Lazy-load references? | Auto-invoke on trigger? | Minimal install? |

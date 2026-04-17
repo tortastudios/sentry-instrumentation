@@ -152,6 +152,19 @@ Your agent reads only the reference it needs for the current task.
 
 ## Quick start
 
+### One-command install (all agents except Claude.ai web)
+
+```bash
+git clone https://github.com/tortastudios/sentry-instrumentation.git
+cd sentry-instrumentation
+scripts/install.sh --agent=<agent> --project=/path/to/your/project
+```
+
+`<agent>` ∈ `claude-code` · `cursor` · `codex` · `aider` · `continue` ·
+`windsurf`. Idempotent — re-run after upstream updates. For Claude Code
+the `--project` flag is optional (omit for user-level install at
+`~/.claude/skills/`).
+
 ### Pick your agent
 
 | Agent | Install guide |
