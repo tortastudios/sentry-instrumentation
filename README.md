@@ -214,6 +214,28 @@ scripts/install.sh --agent=<agent> --project=/path/to/your/project
 updates. For Claude Code the `--project` flag is optional (leave it
 off for a user-level install in `~/.claude/skills/`).
 
+### Pin a version
+
+To lock to a stable release, check out a tag before running the
+installer:
+
+```bash
+git clone https://github.com/tortastudios/sentry-instrumentation.git
+cd sentry-instrumentation
+git checkout v1.0.0
+scripts/install.sh --agent=<agent> --project=/path/to/your/project
+```
+
+Or add as a pinned submodule:
+
+```bash
+git submodule add -b v1.0.0 \
+  https://github.com/tortastudios/sentry-instrumentation.git \
+  vendor/sentry-instrumentation
+```
+
+Available tags: `git ls-remote --tags https://github.com/tortastudios/sentry-instrumentation.git`.
+
 ### Pick your agent
 
 | Agent | Install guide |

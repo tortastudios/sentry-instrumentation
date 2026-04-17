@@ -10,6 +10,14 @@ version numbers follow [SemVer](https://semver.org/spec/v2.0.0.html).
 - `adapters/continue.md` + `adapters/windsurf.md` field-testing.
 - `ci/` workflow templates for GitHub Actions, GitLab CI, pre-commit.
 
+## [1.0.0] — 2026-04-17
+
+Stable release. Same content as 0.1.0; promoted to 1.0.0 to signal API
+stability so downstream projects can pin the skill (`git checkout v1.0.0`
+or `git submodule add -b v1.0.0 ...`) without expecting breaking changes
+to SKILL.md, the reference docs, the Python example modules, the CI gate,
+or the installer interface.
+
 ## [0.1.0] — 2026-04-17
 
 Initial open-source release. Python canonical reference, production-tested at
