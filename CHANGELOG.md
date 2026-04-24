@@ -10,6 +10,51 @@ version numbers follow [SemVer](https://semver.org/spec/v2.0.0.html).
 - `adapters/continue.md` + `adapters/windsurf.md` field-testing.
 - `ci/` workflow templates for GitHub Actions, GitLab CI, pre-commit.
 
+## [1.1.0] — 2026-04-24
+
+Progressive-disclosure refactor of `SKILL.md`. Hot-path bytes — the content
+the agent reads on every skill invocation — shrink from 224 lines / 11.8 KB
+to 69 lines / 5.6 KB (≈53% reduction) without removing any decision-driving
+content. Deep rules stay in `references/` and load only when the task asks
+for them. No behavior change for agents that follow the decision rules; no
+change to the `MetricDef` schema, the Python examples, the CI gate, or the
+installer command-line interface.
+
+### Changed
+
+- **`SKILL.md`** restructured as a lean dispatcher. Kept: YAML frontmatter
+  with auto-invocation triggers, the six decision rules, language-detection
+  hint, Python project-path table, and the reference index.
+- **`scripts/install.sh`** `MINIMAL_CONCAT_FILES` expanded from 5 files to 7.
+  `references/charter.md` and `references/review-rubric.md` are now inlined
+  into the single rules file emitted for Cursor, Aider, Continue, and
+  Windsurf, so agents that cannot lazy-load references still see the charter
+  principles and the PR-review rubric. Claude Code continues to use the
+  symlink install and benefits from the leaner `SKILL.md`.
+
+### Removed (from `SKILL.md` only — no information lost)
+
+- **Charter restatement** — the full version already lives in
+  `references/charter.md`, linked from the reference index.
+- **"When this skill applies" section** — duplicated the YAML
+  `description:` field's auto-invocation triggers.
+- **TypeScript and Go project-path tables** — placeholders for ports
+  that have not shipped. Will be re-introduced alongside
+  `examples/typescript/` (v0.2) and `examples/go/` (v0.3).
+- **Quality-gate checklist** — the full version already lives in
+  `references/review-rubric.md`, linked from the reference index.
+
+### Rationale
+
+Anything that loads on every skill invocation — every `SKILL.md` byte —
+competes with the task itself for the model's attention and token budget.
+The deleted sections were either duplicates of content the agent can
+retrieve on demand, or placeholders for languages without shipped
+references. Moving them out of the hot path shortens the preamble, lets the
+model spend more attention on the actual coding task, and keeps the
+progressive-disclosure boundary clean: `SKILL.md` decides *which* reference
+to open; `references/` carries the depth.
+
 ## [1.0.0] — 2026-04-17
 
 Stable release. Same content as 0.1.0; promoted to 1.0.0 to signal API

@@ -222,14 +222,14 @@ installer:
 ```bash
 git clone https://github.com/tortastudios/sentry-instrumentation.git
 cd sentry-instrumentation
-git checkout v1.0.0
+git checkout v1.1.0
 scripts/install.sh --agent=<agent> --project=/path/to/your/project
 ```
 
 Or add as a pinned submodule:
 
 ```bash
-git submodule add -b v1.0.0 \
+git submodule add -b v1.1.0 \
   https://github.com/tortastudios/sentry-instrumentation.git \
   vendor/sentry-instrumentation
 ```
