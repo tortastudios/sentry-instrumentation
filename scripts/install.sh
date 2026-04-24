@@ -76,10 +76,12 @@ fi
 
 MINIMAL_CONCAT_FILES=(
     "$SKILL_CLONE/SKILL.md"
+    "$SKILL_CLONE/references/charter.md"
     "$SKILL_CLONE/references/signal-model.md"
     "$SKILL_CLONE/references/tagging-and-cardinality.md"
     "$SKILL_CLONE/references/surface-patterns.md"
     "$SKILL_CLONE/references/failure-taxonomy.md"
+    "$SKILL_CLONE/references/review-rubric.md"
 )
 
 concat_minimal() {
