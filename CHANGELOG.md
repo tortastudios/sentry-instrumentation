@@ -10,6 +10,46 @@ version numbers follow [SemVer](https://semver.org/spec/v2.0.0.html).
 - `adapters/continue.md` + `adapters/windsurf.md` field-testing.
 - `ci/` workflow templates for GitHub Actions, GitLab CI, pre-commit.
 
+## [1.2.0] — 2026-06-19
+
+First **tracing** surface. The skill, previously Metrics-only, now also
+covers Sentry's AI Agents / Conversations product via the `gen_ai.*`
+span conventions. No change to any existing metric API, the CI gate, or
+the installer interface — this is purely additive.
+
+### Added
+
+- **`references/ai-agent-conversations.md`** — how to instrument AI
+  agent conversations for Sentry's Explore → Conversations view:
+  `gen_ai.conversation.id` (and `sentry_sdk.ai.set_conversation_id`),
+  the three span types (`gen_ai.invoke_agent` / `gen_ai.chat` /
+  `gen_ai.execute_tool`) with their required attributes, the
+  `{role, parts}` message format, reasoning-part handling, token
+  subset accounting (cached/reasoning are subsets, not separate
+  totals), and how it composes with the governed metric helpers
+  (failures still emit a `failure_counter`; the conversation id never
+  becomes a metric tag). Sourced from the official Sentry docs.
+- **`examples/python/ai_agent_spans.py`** — drop-in module:
+  `set_conversation_id` (capability-gated against the beta
+  `sentry_sdk.ai` API), `conversation_scope`, `{role, parts}` message
+  helpers, and context managers for the three `gen_ai.*` span types
+  with `set_chat_response` for the token/response side.
+
+### Changed
+
+- **`SKILL.md`** — description and intro now cover tracing alongside
+  metrics; new decision rule 7 routes AI agent / LLM / tool / conversation
+  work to the tracing reference; reference index and Python project-path
+  table updated.
+- **`references/charter.md`** — scope now includes AI agent conversation
+  tracing; the general-tracing exclusion is narrowed to "everything
+  except the `gen_ai.*` namespace."
+- **`scripts/install.sh`** — `ai-agent-conversations.md` added to the
+  concatenated rules file emitted for Cursor, Aider, Continue, and
+  Windsurf.
+- **`README.md`**, **`AGENTS.md`**, **`examples/python/README.md`** —
+  updated to describe the metrics + tracing scope and list the new files.
+
 ## [1.1.0] — 2026-04-24
 
 Progressive-disclosure refactor of `SKILL.md`. Hot-path bytes — the content

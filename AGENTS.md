@@ -4,10 +4,12 @@
 
 `sentry-instrumentation` is an **Anthropic-format skill**: a set of rules,
 references, and drop-in code patterns that teach AI coding agents how to
-add Sentry metrics the right way. The canonical reference ships in Python
-under `examples/python/`, but the patterns are language-neutral and port
-to TypeScript, Go, Ruby, etc. The skill is production-tested at Torta
-Studios.
+add Sentry instrumentation the right way — both **metrics** (counter /
+gauge / distribution, duration, failure, resource) and **tracing** (the
+`gen_ai.*` spans for AI agent conversations). The canonical reference
+ships in Python under `examples/python/`, but the patterns are
+language-neutral and port to TypeScript, Go, Ruby, etc. The skill is
+production-tested at Torta Studios.
 
 This is not an application. There is nothing to run from this repo — it
 is installed *into* consumer projects so that an AI agent working in
@@ -54,17 +56,22 @@ on disk.
 
 This project uses the `sentry-instrumentation` skill. When writing code
 that emits a Sentry metric, measures duration, counts failures, wraps a
-workflow step, or adds a retry or fallback path:
+workflow step, adds a retry or fallback path, or instruments an AI agent
+/ LLM call / tool call / conversation:
 
 1. Read `<path-to-skill>/SKILL.md`.
 2. Follow its decision rules and surface patterns.
-3. For deeper rules (tagging, cost model, lifecycle), open the relevant
-   file under `<path-to-skill>/references/`.
+3. For deeper rules (tagging, cost model, lifecycle, AI agent
+   conversations), open the relevant file under
+   `<path-to-skill>/references/`.
 4. Use `<path-to-skill>/examples/python/` as the canonical drop-in
    reference.
 
 Never hand-roll emissions — use the surface patterns (middleware,
-decorator, base class). Never pass a raw string to an emit helper.
+decorator, base class). Never pass a raw string to an emit helper. For
+AI agents, use `gen_ai.*` spans and set `gen_ai.conversation.id` per
+turn — keep the conversation id and message bodies on span attributes,
+never on a metric tag.
 <!-- END sentry-instrumentation -->
 ```
 

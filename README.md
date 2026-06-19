@@ -1,8 +1,8 @@
 # Sentry Instrumentation
 
-> Your AI agent adds Sentry metrics the right way on the first try —
-> so a year from now, when someone asks "is the app actually working?",
-> you have an answer that isn't a guess.
+> Your AI agent adds Sentry instrumentation — metrics *and* tracing —
+> the right way on the first try, so a year from now, when someone asks
+> "is the app actually working?", you have an answer that isn't a guess.
 
 **License:** MIT · **Language (v0.1):** Python (TypeScript + Go on
 the roadmap) · **Works with:** Claude Code · Claude.ai · Cursor ·
@@ -60,6 +60,13 @@ agent writes the same shapes every time, in every file, across every
 surface (HTTP routes, external API clients, workflow steps, retry
 loops, fallback paths).
 
+It also covers **tracing** where Sentry ships a product that depends on
+specific span conventions. The first tracing surface is **AI agent
+conversations** — `gen_ai.*` spans (`invoke_agent` / `chat` /
+`execute_tool`) and conversation ids that power Sentry's Explore →
+Conversations view, with the same cardinality discipline (high-card
+context on spans, never on metric tags).
+
 **We use this in production at Torta Studios.** Every metric that
 ships goes through this gate. The skill is reverse-engineered from
 what actually works in production — not a wish list.
@@ -100,6 +107,11 @@ enough to run a business on:
 - **Retry and fallback observability.** You can tell whether your
   resilience code is firing, how often, and why. Attempt bucket +
   final outcome per retry loop. Named reason per fallback path.
+- **AI agent conversation traces.** Instrument an agent turn with
+  `gen_ai.*` spans — one `invoke_agent` parent, `chat` and
+  `execute_tool` children — stamped with a `gen_ai.conversation.id` so
+  multi-turn sessions group in Sentry's Conversations view, with token
+  usage and per-turn message history attached.
 
 Downstream, once these numbers exist, you get:
 
@@ -119,7 +131,7 @@ Downstream, once these numbers exist, you get:
 ```
 sentry-instrumentation/
 ├── SKILL.md                      # the short contract your agent reads first
-├── references/                   # 12 deeper docs, ~100 lines each
+├── references/                   # 13 deeper docs, ~100 lines each
 │   ├── charter.md                # the six rules every metric must follow
 │   ├── signal-model.md           # the MetricDef schema + 5 constructors
 │   ├── metric-classes.md         # the 5 "purposes" a metric can have
@@ -130,6 +142,7 @@ sentry-instrumentation/
 │   ├── emission-boundaries.md    # where metrics belong in the code
 │   ├── failure-taxonomy.md       # the closed failure-class list
 │   ├── surface-patterns.md       # 6 drop-in code patterns
+│   ├── ai-agent-conversations.md # gen_ai.* tracing for AI agents
 │   ├── enforcement.md            # the 13-check CI gate
 │   └── review-rubric.md          # the PR checklist
 ├── examples/python/              # Python reference implementation
@@ -142,6 +155,7 @@ sentry-instrumentation/
 │   ├── workflow_decorator.py     # @instrumented_step
 │   ├── retry_loop.py             # retry_with_instrumentation
 │   ├── fallback_path.py          # record_fallback
+│   ├── ai_agent_spans.py         # gen_ai.* spans for AI agent conversations
 │   ├── ci_gate.py                # 13-check AST gate
 │   └── test_gates.py             # pytest contract cases
 └── adapters/                     # one install guide per agent
@@ -222,14 +236,14 @@ installer:
 ```bash
 git clone https://github.com/tortastudios/sentry-instrumentation.git
 cd sentry-instrumentation
-git checkout v1.1.0
+git checkout v1.2.0
 scripts/install.sh --agent=<agent> --project=/path/to/your/project
 ```
 
 Or add as a pinned submodule:
 
 ```bash
-git submodule add -b v1.1.0 \
+git submodule add -b v1.2.0 \
   https://github.com/tortastudios/sentry-instrumentation.git \
   vendor/sentry-instrumentation
 ```
@@ -366,10 +380,14 @@ the same rule the same way in every language.
   one external-API client, test gates).
 - **v0.3**: Go port. Ready-made CI templates
   (`ci/github-actions.yml`, `ci/gitlab-ci.yml`, pre-commit hook).
+- **Tracing** (started): AI agent conversations via `gen_ai.*` spans
+  (`references/ai-agent-conversations.md`,
+  `examples/python/ai_agent_spans.py`). More tracing surfaces can join
+  under the same governance principles.
 - **Backlog**: Ruby, Java, Rust ports. An OpenTelemetry adapter (so
   the same `MetricDef` can also emit to OTel alongside Sentry).
-  Auto-generated registry docs. A sibling `sentry-tracing` skill for
-  spans.
+  Auto-generated registry docs. More `gen_ai` integration recipes
+  (Anthropic SDK, LangChain, OpenAI Agents SDK).
 
 ---
 
