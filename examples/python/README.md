@@ -8,6 +8,12 @@ Ports to other languages (TypeScript v0.2, Go v0.3, …) preserve the
 shapes in this directory — same constructors, same 13 CI checks,
 same `FailureClass` taxonomy — under idiomatic names.
 
+Most modules here are **metrics** governance. `ai_agent_spans.py` is the
+first **tracing** module — `gen_ai.*` spans for AI agent conversations.
+The `gen_ai.*` attribute names are Sentry product contract, so they port
+verbatim to any language (only the span-API calls change). See
+`../../references/ai-agent-conversations.md`.
+
 ## Drop-in mapping
 
 Copy each file to the target path in your project, then rename
@@ -24,6 +30,7 @@ Copy each file to the target path in your project, then rename
 | `workflow_decorator.py` | `yourapp/services/<workflow>/instrumentation.py` | `@instrumented_step` decorator |
 | `retry_loop.py` | `yourapp/services/retry.py` | `retry_with_instrumentation` async iterator |
 | `fallback_path.py` | `yourapp/observability.py` or `yourapp/shared/fallback.py` | `record_fallback(metric, reason=...)` |
+| `ai_agent_spans.py` | `yourapp/observability/ai_spans.py` | `gen_ai.*` tracing for AI agent conversations (`invoke_agent` / `chat` / `execute_tool` spans + `set_conversation_id`) |
 | `ci_gate.py` | `scripts/check_metrics.py` | 13-check AST gate |
 | `test_gates.py` | `tests/test_observability_gates.py` | Contract-level pytest cases |
 
@@ -40,6 +47,11 @@ Optional — only if you use the matching surface pattern:
 - `httpx` — for `external_api_client.py`
 
 All other examples are pure-stdlib Python.
+
+`ai_agent_spans.py` needs **tracing enabled** in `sentry_sdk.init`
+(`traces_sample_rate` or a `traces_sampler`) — conversations are built
+from spans. The conversation-id helper wraps the beta `sentry_sdk.ai`
+API and degrades to a no-op on SDKs that predate it.
 
 Python runtime: **3.11+**. The examples use `StrEnum` (added in
 3.11) and PEP-604 union syntax (`X | Y`). For 3.10 support, swap

@@ -5,6 +5,13 @@ defines what signals the service is allowed to emit, how they are
 named and shaped, where they are emitted from, how much they may cost,
 and how misuse is prevented by default.
 
+The skill started as Metrics governance and is **evolving to cover
+tracing** where Sentry ships a product that depends on specific span
+conventions. The first tracing surface is AI agent conversations
+(`gen_ai.*` spans); more tracing conventions can join under the same
+governance principles (closed sets for tags, cardinality on spans not
+metrics, observability never crashes the service).
+
 ## What's in scope
 
 - Sentry Metrics (counter / gauge / distribution).
@@ -14,6 +21,10 @@ and how misuse is prevented by default.
 - Resource accounting (tokens, quota units, bytes).
 - Correctness counters for assumption-violation events (parse
   failures, taxonomy fallbacks).
+- **AI agent conversation tracing**: `gen_ai.*` spans
+  (`invoke_agent` / `chat` / `execute_tool`), `gen_ai.conversation.id`,
+  and per-call token/message attributes for Sentry's Explore →
+  Conversations view. See `ai-agent-conversations.md`.
 
 ## What's out of scope
 
@@ -24,8 +35,11 @@ and how misuse is prevented by default.
   are downstream consumers of the metrics this skill defines. Clean
   instrumentation is a precondition; the dashboards themselves are
   decided outside the code.
-- **Distributed tracing conventions** (span naming, span attributes,
-  span kinds): related but large enough for its own skill.
+- **General distributed tracing conventions** (span naming, span
+  attributes, span kinds for arbitrary services): still out of scope —
+  large enough for its own skill. The one tracing surface this skill
+  *does* cover is the `gen_ai.*` namespace (above), because Sentry's
+  Conversations product reads those exact attributes.
 - **Logs**: routed through the project's logger (typically via Sentry's
   `LoggingIntegration`). Metric decisions don't dictate log content.
 

@@ -81,6 +81,7 @@ MINIMAL_CONCAT_FILES=(
     "$SKILL_CLONE/references/tagging-and-cardinality.md"
     "$SKILL_CLONE/references/surface-patterns.md"
     "$SKILL_CLONE/references/failure-taxonomy.md"
+    "$SKILL_CLONE/references/ai-agent-conversations.md"
     "$SKILL_CLONE/references/review-rubric.md"
 )
 
