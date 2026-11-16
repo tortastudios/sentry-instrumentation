@@ -163,7 +163,7 @@ def _route_name_for_tagging(request: Request) -> str:
 
     Starlette populates `request.scope["route"]` with the matched
     `APIRoute`/`Route`. Its `.name` is a stable string the app owns;
-    the URL path carries path params (PII risk, cardinality blowup).
+    the URL path carries path params (PII risk, and an unusable group-by).
     Unmatched routes (middleware firing on 404) fall back to a
     bucketed label.
     """

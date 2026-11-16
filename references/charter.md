@@ -9,12 +9,12 @@ The skill started as Metrics governance and is **evolving to cover
 tracing** where Sentry ships a product that depends on specific span
 conventions. The first tracing surface is AI agent conversations
 (`gen_ai.*` spans); more tracing conventions can join under the same
-governance principles (closed sets for tags, cardinality on spans not
-metrics, observability never crashes the service).
+governance principles (closed sets for group-by tags, free-form text
+on spans not metrics, observability never crashes the service).
 
 ## What's in scope
 
-- Sentry Metrics (counter / gauge / distribution).
+- Sentry Application Metrics (counter / gauge / distribution).
 - Duration measurement around external calls, workflow steps, and
   request lifecycles.
 - Failure counters bucketed through a bounded taxonomy.
@@ -23,8 +23,8 @@ metrics, observability never crashes the service).
   failures, taxonomy fallbacks).
 - **AI agent conversation tracing**: `gen_ai.*` spans
   (`invoke_agent` / `chat` / `execute_tool`), `gen_ai.conversation.id`,
-  and per-call token/message attributes for Sentry's Explore →
-  Conversations view. See `ai-agent-conversations.md`.
+  and per-call token/message attributes for Sentry's Conversations
+  view (Explore → Agents). See `ai-agent-conversations.md`.
 
 ## What's out of scope
 
@@ -45,10 +45,15 @@ metrics, observability never crashes the service).
 
 ## Principles
 
-1. **Closed sets over open strings.** Every tag value is either
-   enumerated verbatim in `MetricDef.tag_constraints` or is the output
-   of an approved bucket function. Raw exception strings, user ids,
-   URLs, timestamps — all forbidden as tag values.
+1. **Closed sets for what you group by; declared ids for what you
+   look up.** Every group-by tag value is either enumerated verbatim
+   in `MetricDef.tag_constraints` or is the output of an approved
+   bucket function, because alert rules and dashboards need stable
+   values. High-cardinality ids (account, project, order, replay) are
+   allowed as declared `context=` attributes — Sentry stores full
+   metric events, so they are queryable. Raw exception strings,
+   free-form text, emails, raw URLs and timestamps are forbidden on a
+   metric in either role. See `tagging-and-cardinality.md`.
 2. **Identity is immutable.** A metric's
    `(name, kind, unit, purpose, allowed_tags, tag_constraints)` tuple
    cannot change under the same name. Meaning change = new versioned
@@ -66,19 +71,20 @@ metrics, observability never crashes the service).
    own SLI. A rising `UNKNOWN` rate means a new exception class is
    being raised without a registration, or a dependency is failing in
    a shape nobody modeled. Either way it's actionable.
-6. **Cost is a first-class attribute.** Hot-path distributions sample;
-   loops aggregate; rate limits drop beyond a cap. Every `MetricDef`
-   declares its cost shape so the helper + CI gate can enforce it
-   uniformly.
+6. **Cost is a first-class attribute.** Sentry bills metrics by data
+   volume, and Spike Protection doesn't cover them. Hot-path
+   distributions sample; loops aggregate; rate limits drop beyond a
+   cap. Every `MetricDef` declares its cost shape so the helper + CI
+   gate can enforce it uniformly. See `cost-model.md`.
 
 ## How this skill earns its keep
 
 Without governed instrumentation you get:
 
-- Raw `str(exc)` leaking into tag values (PII risk, cardinality
-  blowup, alert rules can't match).
-- Distributions in tight loops (Sentry bill explodes; percentiles
-  distort).
+- Raw `str(exc)` leaking into tag values (PII risk, alert rules
+  can't match, group-bys return one row per message).
+- Emissions in tight loops (billed volume multiplies by the loop
+  length).
 - Silently renamed metrics (dashboards go dark overnight; no audit
   trail).
 - New metrics invented per feature that duplicate existing coverage

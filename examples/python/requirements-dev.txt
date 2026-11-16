@@ -1,0 +1,3 @@
+# Versions the reference examples are tested against.
+sentry-sdk==2.75.0
+pytest==9.2.0

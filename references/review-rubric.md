@@ -19,8 +19,13 @@ PR template or a local checklist.
 3. **All tag keys in `MetricDef.allowed_tags`?**
 4. **All tag values enumerated in `tag_constraints` or produced by an
    approved bucket function?**
-5. **No forbidden values?** (user ids, URLs, raw exception strings,
-   timestamps, versioned model names, IPs, file paths)
+5. **Ids in `context=`, not `tags=`?** Account / project / order /
+   replay ids are fine as declared context; they are never group-by
+   tags.
+5a. **Nothing forbidden in either role?** (free-form text, raw
+   exception strings, emails, IPs, raw URLs, timestamps, file paths)
+5b. **Context kept to the ids someone would actually search by?**
+   Each key adds bytes to every event.
 
 ## Duplication
 
@@ -39,8 +44,8 @@ PR template or a local checklist.
 ## Cardinality
 
 8. **If `cardinality="medium"`:** is the justification credible? Does
-   `means=` spell out why the dimensional explosion is worth the
-   series cost? Would a log line or span be a better fit?
+   `means=` say which dashboard or alert needs that many groups?
+   Would the dimension be better as `context=`?
 
 ## Failure metrics
 
@@ -89,7 +94,10 @@ PR template or a local checklist.
 ## Anti-patterns to flag
 
 - Raw string passed to any `emit_*` call.
-- Raw exception type or message in a tag value.
+- Raw exception type or message in a tag or context value.
+- An id (`account_id`, `request_id`, …) used as a group-by tag.
+- `trace_id` / `request_id` added as context just to reach the trace —
+  every metric event already carries `trace_id` and `span_id`.
 - Dynamic metric name (f-string, `.format`, variable).
 - Distribution used to record integer counts.
 - Gauge used for monotonic accumulation.

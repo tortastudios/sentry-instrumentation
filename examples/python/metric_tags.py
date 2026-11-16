@@ -1,7 +1,7 @@
-"""Approved bucket functions for low-cardinality metric tag values.
+"""Approved bucket functions for group-by metric tag values.
 
-Drop-in at `yourapp/shared/metric_tags.py`. Every tag value passed to
-an `emit_*` helper must be either enumerated verbatim in
+Drop-in at `yourapp/shared/metric_tags.py`. Every `tags=` value passed
+to an `emit_*` helper must be either enumerated verbatim in
 `MetricDef.tag_constraints` or the output of one of these functions.
 
 Each bucket is *total* — never raises on pathological inputs, always
@@ -99,7 +99,7 @@ def bool_tag(value: bool) -> str:
     """Render a boolean as the canonical tag string.
 
     Pins the exact casing every metric agrees on — a `"True"`/`"true"`
-    split would double the series count for the affected tag.
+    split would show up as two separate groups for the same value.
     """
 
     return "true" if value else "false"

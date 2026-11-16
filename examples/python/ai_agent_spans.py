@@ -2,14 +2,14 @@
 
 This is the **tracing** companion to the metric helpers in
 `emission_module.py`. It instruments an agent turn so it shows up in
-Sentry's Explore -> Conversations view: one `gen_ai.invoke_agent` span
+Sentry's Conversations view (Explore -> Agents -> Conversations): one `gen_ai.invoke_agent` span
 per run, with `gen_ai.chat` and `gen_ai.execute_tool` spans nested
 under it, all stamped with a `gen_ai.conversation.id` so multi-turn
 sessions group together.
 
 Reference: references/ai-agent-conversations.md. Sentry docs:
-  https://docs.sentry.io/ai/monitoring/conversations/
-  https://docs.sentry.io/platforms/python/tracing/instrumentation/custom-instrumentation/ai-agents-module/
+  https://docs.sentry.io/product/agents/conversations/
+  https://docs.sentry.io/platforms/python/agent-tracing/manual-instrumentation/
 
 Drop in at `yourapp/observability/ai_spans.py` (or alongside
 `observability.py`). Requires tracing to be enabled in `sentry_sdk.init`
@@ -18,15 +18,26 @@ built from spans.
 
 Two rules carried over from the metric helpers:
 
-  1. *Observability never crashes the service.* `sentry_sdk.ai` is a
-     beta API; `set_conversation_id` is capability-gated so a version
-     bump can't raise in the request path.
-  2. *Cardinality stays on the span, not the metric.* The conversation
-     id and message bodies live on span attributes (unbounded is fine
-     there). Never copy them into a `MetricDef` tag — see
+  1. *Observability never crashes the service.* `set_conversation_id`
+     is capability-gated so an SDK without `sentry_sdk.ai` (or a future
+     rename) can't raise in the request path.
+  2. *Message bodies stay on the span.* Prompts, completions and tool
+     payloads live on span attributes only — never on a metric. The
+     conversation id is never a group-by `tags=` value; if a metric
+     needs it to find the conversation, declare it as `context=` — see
      references/tagging-and-cardinality.md.
 
-Python 3.11+ (PEP-604 unions). Pure-stdlib apart from `sentry-sdk>=2.0`.
+Privacy: attributes set by hand are NOT filtered by the SDK's
+`data_collection` / `send_default_pii` options — those only gate what the
+automatic integrations record. If you must not ship prompt text, don't
+pass `input_messages` / `output_messages` here.
+
+Written for the sentry-sdk 2.x span API (`start_span(op=..., name=...)`
++ `span.set_data`). In span-streaming mode (`trace_lifecycle="stream"`)
+`set_data` is replaced by `set_attribute`. Sentry's docs say gen_ai spans
+need sentry-sdk 2.64.0+ to appear in Conversations. Tested on 2.75.0.
+
+Python 3.11+ (PEP-604 unions). Pure-stdlib apart from `sentry-sdk`.
 """
 
 from __future__ import annotations
@@ -42,19 +53,22 @@ import sentry_sdk
 logger = logging.getLogger(__name__)
 
 
-# ---- Conversation id (beta API, capability-gated) --------------------------
+# ---- Conversation id (capability-gated) ------------------------------------
 
 
 def set_conversation_id(conversation_id: str) -> None:
     """Stamp `gen_ai.conversation.id` onto subsequent gen_ai spans in scope.
 
-    Wraps the beta `sentry_sdk.ai.set_conversation_id`. If the installed
-    SDK predates the API (or it gets renamed), this degrades to a no-op
+    Wraps `sentry_sdk.ai.set_conversation_id`. If the installed SDK
+    predates the API (or it gets renamed), this degrades to a no-op
     instead of raising in the request path.
+
+    Sentry asks for a short opaque id — alphanumerics, dashes and
+    underscores only; not a URL, an email address, or free text.
     """
     try:
         import sentry_sdk.ai
-    except Exception:  # pragma: no cover - SDK without the beta module
+    except Exception:  # pragma: no cover - SDK without the module
         logger.debug("sentry_sdk.ai unavailable; conversation id not set")
         return
 
@@ -78,7 +92,8 @@ def conversation_scope(conversation_id: str) -> Iterator[None]:
 
     Derive `conversation_id` from your own session/thread identity (chat
     session uuid, DB row id) — NOT from the Sentry trace id. A single
-    conversation can span multiple traces and vice versa.
+    conversation can span multiple traces and vice versa. If there is
+    no conversation, don't call this at all rather than inventing an id.
     """
     with sentry_sdk.isolation_scope():
         set_conversation_id(conversation_id)
@@ -197,9 +212,10 @@ def set_chat_response(
 
     Token totals INCLUDE their subsets: `input_tokens` already counts
     `input_tokens_cached`, and `output_tokens` already counts
-    `output_tokens_reasoning`. Sentry computes cost as
-    `(total - cached) * rate + cached * cached_rate`; passing the subsets
-    as separate totals double-counts and can make cost go negative.
+    `output_tokens_reasoning`. Sentry derives cost from these during
+    ingestion (don't set `gen_ai.cost.*` yourself); reporting only the
+    non-cached input tokens as the total produces wrong, even negative,
+    costs.
     """
     span.set_data("gen_ai.response.model", response_model)
     if output_messages is not None:
@@ -211,12 +227,14 @@ def set_chat_response(
     if input_tokens is not None:
         span.set_data("gen_ai.usage.input_tokens", input_tokens)
     if input_tokens_cached is not None:
-        span.set_data("gen_ai.usage.input_tokens.cached", input_tokens_cached)
+        span.set_data(
+            "gen_ai.usage.cache_read.input_tokens", input_tokens_cached
+        )
     if output_tokens is not None:
         span.set_data("gen_ai.usage.output_tokens", output_tokens)
     if output_tokens_reasoning is not None:
         span.set_data(
-            "gen_ai.usage.output_tokens.reasoning", output_tokens_reasoning
+            "gen_ai.usage.reasoning.output_tokens", output_tokens_reasoning
         )
 
 

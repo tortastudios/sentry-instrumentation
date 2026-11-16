@@ -68,10 +68,11 @@ workflow step, adds a retry or fallback path, or instruments an AI agent
    reference.
 
 Never hand-roll emissions — use the surface patterns (middleware,
-decorator, base class). Never pass a raw string to an emit helper. For
-AI agents, use `gen_ai.*` spans and set `gen_ai.conversation.id` per
-turn — keep the conversation id and message bodies on span attributes,
-never on a metric tag.
+decorator, base class). Never pass a raw string to an emit helper.
+Group-by tags (`tags=`) are closed lists; ids used for debugging go in
+declared `context=`; free-form text never goes on a metric. For AI
+agents, use `gen_ai.*` spans and set `gen_ai.conversation.id` per
+turn — keep message bodies on span attributes, never on a metric.
 <!-- END sentry-instrumentation -->
 ```
 

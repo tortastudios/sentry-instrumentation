@@ -11,7 +11,7 @@ class MetricDef:
     # --- identity (immutable under the same name) ---
     name: str                        # dotted identifier, unique
     kind: Literal["counter", "gauge", "distribution"]
-    unit: str                        # "ms", "bytes", "tokens", "count", "none"
+    unit: str                        # "millisecond", "byte", "tokens", "count"
     purpose: Literal["outcome", "latency", "load", "resource", "correctness"]
 
     # --- tagging ---
@@ -24,6 +24,9 @@ class MetricDef:
     sampling_rate: float = 1.0
     max_rate_hz: float | None = None
     loop_policy: Literal["forbidden", "aggregate_only", "allowed"] = "aggregate_only"
+
+    # --- debug context (free-valued, never grouped or alerted on) ---
+    context_attributes: frozenset[str] = frozenset()
 
     # --- operational + ownership ---
     operational_meaning: str
@@ -39,6 +42,9 @@ class MetricDef:
 Identity tuple: `(name, kind, unit, purpose, allowed_tags,
 tag_constraints)`. Immutable once published — see
 `naming-and-lifecycle.md` for the versioning rule.
+`context_attributes` is deliberately outside the identity: adding a
+debug-context key changes neither what the metric measures nor how it
+groups.
 
 Equality and hashing are deliberately **name-based**: two `MetricDef`s
 with the same name are "the same metric" for registry dedup purposes.
@@ -53,15 +59,15 @@ knobs that matter for that metric class.
 
 ```python
 MetricDef.counter(
-    name, *, purpose, owner, means, tags=None,
+    name, *, purpose, owner, means, tags=None, context=None,
     emit_frequency="per_event", sampling_rate=1.0, max_rate_hz=None,
     loop_policy="aggregate_only", cardinality="low",
     version=1, deprecated=False, replaced_by=None, retired_at=None,
 ) -> MetricDef                         # kind="counter", unit="count"
 
 MetricDef.latency(
-    name, *, owner, means, tags=None, ...
-) -> MetricDef                         # kind="distribution", unit="ms", purpose="latency"
+    name, *, owner, means, tags=None, context=None, unit="millisecond", ...
+) -> MetricDef                         # kind="distribution", purpose="latency"
 
 MetricDef.gauge(
     name, *, unit, owner, means, tags=None, emit_frequency="periodic", ...
@@ -148,6 +154,26 @@ WORKER_JOB_FAILURES = MetricDef.failure_counter(
 - `purpose` is the semantic bucket. Exactly one purpose fits a metric;
   if two fit, it's actually two metrics. See `metric-classes.md`.
 
+## Unit notes
+
+`unit` is passed straight to Sentry. Sentry's SDK spec says SDKs must
+not restrict the string, and the Python SDK types it as its duration /
+information unit names "or any `str`"
+([spec](https://develop.sentry.dev/sdk/telemetry/metrics/)).
+
+- **Durations:** `MetricDef.latency` defaults to `"millisecond"`, the
+  spelling in Sentry's Python docs and the SDK's unit literals. `"ms"`
+  is still accepted via `unit="ms"` for metrics registered earlier —
+  the unit is part of the identity, so don't rewrite it in place.
+  (Sentry's product docs also show `ms` and `bytes` as example units;
+  the docs don't say whether the short and long spellings chart
+  differently.)
+- **Sizes:** prefer `"byte"`.
+- **Counters:** Sentry's spec says `unit` is "only used for
+  distribution and gauge". The helpers still pass a counter's unit
+  through (the Python SDK accepts it), which is useful for resource
+  counters (`"tokens"`); don't rely on Sentry rendering it.
+
 ## Tagging field notes
 
 - `allowed_tags` is derived from `tag_constraints` — don't pass it
@@ -156,20 +182,31 @@ WORKER_JOB_FAILURES = MetricDef.failure_counter(
   values) or `str` (name of an approved bucket function in
   `metric_tags.py`). See `tagging-and-cardinality.md` for which bucket
   functions are approved.
-- `cardinality` defaults to `"low"` (≤ 20 combinations). Use
+- `cardinality` defaults to `"low"` (≤ 20 group-by combinations). Use
   `"medium"` (≤ ~200) only with an explicit justification in `means=`.
-  `"high"` is forbidden.
+  It budgets group-by readability, not cost.
+
+## Context field notes
+
+- `context=` on a constructor is a set of key names:
+  `context={"account_id", "order_id"}`. Values are free at emission
+  time but must be a str/int/float/bool; strings are capped at 200
+  characters.
+- A key can't be both a tag and a context attribute.
+- Free-text and personal-data keys (`email`, `prompt`, `error_message`,
+  `url`, …) and the SDK's `sentry.*` / `user.*` namespaces are refused.
+- See `tagging-and-cardinality.md` for when to use which.
 
 ## Cost field notes
 
 - `emit_frequency` tells the reader (and the rate-limiter budget) how
   often this metric fires: `per_request`, `per_step`, `per_event`,
   `periodic`.
-- `sampling_rate` < 1.0 is required for distributions on hot paths (>
-  1000/s). The helper API reweighs the emission deterministically per
-  tag hash.
+- `sampling_rate` < 1.0 is for distributions on hot paths (> 1000/s).
+  Sampling is uniform random; it preserves percentiles and
+  under-reports `count()`/`sum()` by the sampling factor.
 - `max_rate_hz` is the per-process hard cap. The emission helper drops
-  beyond this and emits a `correctness` counter.
+  beyond this and reports the number dropped once per window.
 - `loop_policy` controls CI enforcement of loop-safe emission. See
   `cost-model.md`.
 

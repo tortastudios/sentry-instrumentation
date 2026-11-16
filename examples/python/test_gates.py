@@ -13,14 +13,13 @@ The layout mirrors the concern areas:
   - Loop-safety helpers (AggregatingCounter, DurationAccumulator)
   - Rate limiter + sampling determinism
 
-Tests use a fake Sentry sink captured via an env-var toggle on the
-emission module — real implementations either monkey-patch
-`sentry_sdk.metrics` or expose a pluggable sink. The important
-contract is what gets emitted (or not) and whether the helper raises,
-not the specific sink.
+Tests replace the emission module's `_sink` — the one function that
+calls `sentry_sdk.metrics.*` — with a recorder, so they assert on what
+would be sent without a DSN.
 
-These tests should run in strict mode (`settings.environment !=
-"production"`) so validation raises rather than drops.
+Runnable in this repo: `conftest.py` maps the example files onto the
+`yourapp.*` import paths. Under pytest the helpers are always in strict
+mode, so validation raises rather than drops.
 """
 
 from __future__ import annotations
@@ -31,6 +30,7 @@ from typing import Any
 
 import pytest
 
+import yourapp.observability as observability
 from yourapp.observability import (
     AggregatingCounter,
     DurationAccumulator,
@@ -49,14 +49,15 @@ from yourapp.shared.metrics import REGISTRY, MetricDef
 
 @pytest.fixture
 def sink(monkeypatch: pytest.MonkeyPatch) -> list[tuple[str, dict[str, Any]]]:
-    """Capture emissions. Replace with your project's fake-sink hook."""
+    """Capture what the helpers would hand to `sentry_sdk.metrics.*`."""
 
     captured: list[tuple[str, dict[str, Any]]] = []
 
     def fake_emit(kind: str, **payload: Any) -> None:
         captured.append((kind, payload))
 
-    monkeypatch.setattr("yourapp.observability._sink", fake_emit)
+    monkeypatch.setattr(observability, "_sink", fake_emit)
+    monkeypatch.setattr(observability, "_rate_buckets", {})
     return captured
 
 
@@ -113,7 +114,7 @@ def test_emit_failure_requires_failure_class_tag(sink: list[Any]) -> None:
     )
     # emit_failure injects failure_class from the FailureClass arg.
     emit_failure(f, failure=FailureClass.TIMEOUT, tags={})
-    assert sink and sink[0][1]["tags"]["failure_class"] == "timeout"
+    assert sink and sink[0][1]["attributes"]["failure_class"] == "timeout"
 
     # emit_counter on a failure_counter without the tag must raise.
     with pytest.raises(InstrumentationContractError, match="failure_class"):
@@ -127,7 +128,7 @@ def test_emit_latency_rejects_non_ms_unit(sink: list[Any]) -> None:
     secs = MetricDef(
         name="test.op.seconds",
         kind="distribution",
-        unit="s",
+        unit="second",
         purpose="latency",
         allowed_tags=frozenset(),
         tag_constraints={},
@@ -138,6 +139,60 @@ def test_emit_latency_rejects_non_ms_unit(sink: list[Any]) -> None:
     )
     with pytest.raises(InstrumentationContractError, match="unit"):
         emit_latency(secs, duration_ms=1.0, tags={})
+
+
+def test_emit_latency_accepts_both_millisecond_spellings(sink: list[Any]) -> None:
+    current = MetricDef.latency(
+        "test.op.duration", owner="platform", tags={}, means="Test.",
+        emit_frequency="per_event",
+    )
+    legacy = MetricDef.latency(
+        "test.legacy.duration", owner="platform", tags={}, means="Test.",
+        emit_frequency="per_event", unit="ms",
+    )
+    emit_latency(current, duration_ms=1.0)
+    emit_latency(legacy, duration_ms=1.0)
+    assert [e[1]["unit"] for e in sink] == ["millisecond", "ms"]
+
+
+# ---- Debug-context attributes ----------------------------------------------
+
+
+def test_context_is_sent_alongside_tags(sink: list[Any]) -> None:
+    m = _counter(context={"account_id", "project_id"})
+    emit_counter(
+        m, tags={"status": "ok"}, context={"account_id": "acct_42", "project_id": 7}
+    )
+    assert sink[0][1]["attributes"] == {
+        "status": "ok", "account_id": "acct_42", "project_id": 7,
+    }
+
+
+def test_emit_rejects_undeclared_context_key(sink: list[Any]) -> None:
+    m = _counter(context={"account_id"})
+    with pytest.raises(InstrumentationContractError, match="context key"):
+        emit_counter(m, tags={"status": "ok"}, context={"request_id": "r1"})
+    assert sink == []
+
+
+def test_emit_rejects_free_text_context_value(sink: list[Any]) -> None:
+    m = _counter(context={"account_id"})
+    with pytest.raises(InstrumentationContractError, match="longer than"):
+        emit_counter(m, tags={"status": "ok"}, context={"account_id": "x" * 500})
+    with pytest.raises(InstrumentationContractError, match="str/int/float/bool"):
+        emit_counter(m, tags={"status": "ok"}, context={"account_id": ["a"]})
+    assert sink == []
+
+
+def test_context_key_cannot_shadow_a_tag() -> None:
+    with pytest.raises(ValueError, match="both a tag and a context"):
+        _counter(context={"status"})
+
+
+@pytest.mark.parametrize("key", ["email", "prompt", "error_message", "sentry.release", "user.id"])
+def test_forbidden_or_reserved_context_keys_are_rejected(key: str) -> None:
+    with pytest.raises(ValueError, match="not allowed"):
+        _counter(context={key})
 
 
 # ---- Registry integrity ---------------------------------------------------
@@ -229,7 +284,7 @@ def test_aggregating_counter_emits_once_at_exit(sink: list[Any]) -> None:
     m = _counter()
     with AggregatingCounter(m, tags={"status": "ok"}) as c:
         for _ in range(1000):
-            c.inc()
+            c.add()
     counter_emissions = [e for e in sink if e[0] == "counter"]
     assert len(counter_emissions) == 1
     assert counter_emissions[0][1]["value"] == 1000
@@ -267,44 +322,50 @@ def test_rate_limiter_drops_beyond_max_rate_hz(sink: list[Any]) -> None:
     m = _counter(max_rate_hz=5.0)
     for _ in range(100):
         emit_counter(m, tags={"status": "ok"})
-    counter_emissions = [e for e in sink if e[0] == "counter"]
-    # Strictly fewer than 100 — the exact cap depends on token-bucket
-    # implementation, but the contract is that the ceiling is honored.
-    assert len(counter_emissions) < 100
-    # A violation counter must have fired for the drops.
-    violations = [
+    sent = [e for e in sink if e[1]["name"] == "test.event.count"]
+    assert len(sent) == 5
+
+    # Drops are reported as ONE event carrying the total, not one per drop.
+    observability.flush_rate_limit_drops()
+    drops = [
         e for e in sink
-        if e[0] == "counter"
-        and e[1].get("name", "").startswith("instrumentation.rate_limit")
+        if e[1]["name"] == "instrumentation.rate_limit.drop_count"
     ]
-    assert violations
+    assert len(drops) == 1
+    assert drops[0][1]["value"] == 95
+    assert drops[0][1]["attributes"] == {"metric": "test.event.count"}
 
 
-def test_sampling_rate_is_deterministic_by_tag_hash(sink: list[Any]) -> None:
+def test_sampling_keeps_a_fraction_of_every_tag_group(
+    monkeypatch: pytest.MonkeyPatch, sink: list[Any]
+) -> None:
+    import random
+
+    monkeypatch.setattr(observability, "_rng", random.Random(1234))
     m = MetricDef.latency(
         "test.sampled.duration",
         owner="platform",
         tags={"bucket": frozenset({"a", "b", "c", "d", "e"})},
-        means="Test deterministic sampling.",
+        means="Test sampling.",
         emit_frequency="per_event",
         sampling_rate=0.5,
     )
-    # Emit 100 times per tag; the decision must be the same for every
-    # emission with the same tag set.
-    results: dict[str, set[bool]] = {}
     for bucket in "abcde":
-        results[bucket] = set()
-        for _ in range(100):
-            before = len([e for e in sink if e[0] == "distribution"])
+        for _ in range(400):
             emit_distribution(m, tags={"bucket": bucket}, value=1.0)
-            after = len([e for e in sink if e[0] == "distribution"])
-            results[bucket].add(after > before)
-    # Each tag set is either always sampled or always dropped — never
-    # both.
-    for bucket, decisions in results.items():
-        assert len(decisions) == 1, (
-            f"Sampling non-deterministic for bucket={bucket}: {decisions}"
-        )
+    kept = {b: 0 for b in "abcde"}
+    for _, payload in sink:
+        kept[payload["attributes"]["bucket"]] += 1
+    # No tag group is dropped wholesale; each keeps roughly half.
+    for bucket, n in kept.items():
+        assert 150 < n < 250, f"bucket={bucket} kept {n}/400"
+
+
+def test_counters_are_never_sampled(sink: list[Any]) -> None:
+    m = _counter(sampling_rate=0.01)
+    for _ in range(50):
+        emit_counter(m, tags={"status": "ok"})
+    assert len(sink) == 50
 
 
 # ---- Production fail-safety ----------------------------------------------
@@ -313,26 +374,52 @@ def test_sampling_rate_is_deterministic_by_tag_hash(sink: list[Any]) -> None:
 def test_violation_drops_silently_in_production(
     monkeypatch: pytest.MonkeyPatch, sink: list[Any]
 ) -> None:
-    monkeypatch.setenv("APP_ENV", "production")
-    # Reimport or re-instantiate so the helper reads the env.
-    # (Implementation-specific.)
-    from yourapp.observability import emit_counter as prod_emit
+    monkeypatch.setattr(observability, "_is_strict_environment", lambda: False)
     m = _counter()
-    # Bad tag — in production this drops + emits a violation counter,
-    # never raises.
-    prod_emit(m, tags={"status": "nope"})
-    # No exception raised. Violation counter should be recorded.
-    violations = [
-        e for e in sink
-        if e[0] == "counter"
-        and e[1].get("name", "").startswith("instrumentation.violation")
-    ]
-    assert violations
+    # Bad tag value — in production this drops + emits a violation
+    # counter, never raises.
+    emit_counter(m, tags={"status": "nope"})
+    assert [e[1]["name"] for e in sink] == ["instrumentation.violation.count"]
+    # The rule attribute is a fixed code, not the error message text.
+    assert sink[0][1]["attributes"] == {
+        "metric": "test.event.count",
+        "rule": "tag_value_outside_constraints",
+    }
 
 
-def test_noops_when_unconfigured(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("SENTRY_DSN", "")
-    # Re-init the module (project-specific) and verify emit_* is a no-op
-    # when the SDK isn't configured. The contract: no exception, no I/O.
-    from yourapp.observability import emit_counter as bare_emit
-    bare_emit(_counter(), tags={"status": "ok"})  # must not raise
+def test_emit_swallows_sdk_exceptions(monkeypatch: pytest.MonkeyPatch) -> None:
+    def boom(kind: str, **payload: Any) -> None:
+        raise RuntimeError("sdk exploded")
+
+    monkeypatch.setattr(observability, "_sink", boom)
+    emit_counter(_counter(), tags={"status": "ok"})  # must not raise
+    emit_gauge(
+        MetricDef.gauge(
+            "test.queue.depth", unit="items", owner="platform", tags={},
+            means="Test gauge.", emit_frequency="periodic",
+        ),
+        value=3.0,
+    )
+
+
+def test_noops_when_unconfigured() -> None:
+    # No DSN, SDK never initialized: the real sink must be a silent no-op.
+    emit_counter(_counter(), tags={"status": "ok"})
+
+
+def test_real_sdk_receives_attributes_keyword(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Pin the call shape against the installed sentry-sdk."""
+
+    import inspect
+
+    import sentry_sdk
+
+    for fn in (
+        sentry_sdk.metrics.count,
+        sentry_sdk.metrics.gauge,
+        sentry_sdk.metrics.distribution,
+    ):
+        params = inspect.signature(fn).parameters
+        assert list(params)[:2] == ["name", "value"]
+        assert "attributes" in params and "unit" in params
+        assert "tags" not in params
