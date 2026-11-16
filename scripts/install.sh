@@ -174,6 +174,8 @@ workflow step, or adds a retry or fallback path:
 
 Never hand-roll emissions — use the surface patterns (middleware,
 decorator, base class). Never pass a raw string to an emit helper.
+Group-by tags (\`tags=\`) are closed lists; ids used for debugging go in
+declared \`context=\`; free-form text never goes on a metric.
 $end
 EOF
 )"

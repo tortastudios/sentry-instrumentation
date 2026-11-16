@@ -2,8 +2,8 @@
 
 Drop-in at `yourapp/shared/failure_taxonomy.py`. Every failure-counter
 metric tags with one value from `FailureClass`. Raw exception strings
-are forbidden as tag values: cardinality explodes, PII leaks through,
-and downstream alert rules can't match on them. Call sites bucket
+are forbidden on metrics: PII leaks through, group-bys return one row
+per message, and downstream alert rules can't match on them. Call sites bucket
 their raw exception through `classify()` before emitting.
 
 The classifier is intentionally small. Domain modules register their

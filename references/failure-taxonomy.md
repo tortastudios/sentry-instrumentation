@@ -2,8 +2,8 @@
 
 Every failure counter tags with one value from a closed, bounded set
 — the `FailureClass`. Raw exception strings as tag values are
-forbidden: cardinality blows up, PII leaks through, downstream alert
-rules can't match on them.
+forbidden: PII leaks through, a group-by returns one row per message,
+and downstream alert rules can't match on them.
 
 ## `FailureClass`
 

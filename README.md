@@ -47,15 +47,19 @@ It's the difference between **guessing how your app is doing** and
 
 Most codebases measure themselves by accident. Someone adds a counter
 called `cache_hits`. Someone else adds one called `cacheHit`. A third
-person adds one called `cache.hit.count` with a user ID as a tag — and
-now your Sentry bill is going up 30% a month because every user makes
-a new series. Nobody writes down what `attempt_count` actually means.
+person adds one called `cache.hit.count` and puts the raw exception
+message on it as a tag — so the dashboard that groups by it has one
+row per message, and no alert rule can match any of them. Nobody
+writes down what `attempt_count` actually means.
 A year later the dashboards say the system is fine, and your on-call
 engineer knows it isn't.
 
 This skill fixes that at the source. It gives your AI coding agent a
 small, strict grammar for adding metrics: **one way to name them, one
-way to tag them, one way to emit them, one way to retire them.** Your
+way to tag them, one way to emit them, one way to retire them.** Tags
+you group and alert on come from closed lists. Ids you need for
+debugging (account, project, order) ride along as declared context —
+Sentry stores every metric as a full event, so they stay queryable. Your
 agent writes the same shapes every time, in every file, across every
 surface (HTTP routes, external API clients, workflow steps, retry
 loops, fallback paths).
@@ -63,9 +67,9 @@ loops, fallback paths).
 It also covers **tracing** where Sentry ships a product that depends on
 specific span conventions. The first tracing surface is **AI agent
 conversations** — `gen_ai.*` spans (`invoke_agent` / `chat` /
-`execute_tool`) and conversation ids that power Sentry's Explore →
-Conversations view, with the same cardinality discipline (high-card
-context on spans, never on metric tags).
+`execute_tool`) and conversation ids that power Sentry's Conversations
+view (Explore → Agents), with the same discipline (message bodies on
+spans, never on metrics).
 
 **We use this in production at Torta Studios.** Every metric that
 ships goes through this gate. The skill is reverse-engineered from
@@ -93,7 +97,8 @@ enough to run a business on:
   How many Stripe API calls went to the wrong environment? You get
   counters for LLM tokens, third-party API quota units, bytes
   written — each with a clean, closed list of tag values so the
-  numbers stay grouped sensibly.
+  numbers stay grouped sensibly, plus the account or project id as
+  context so you can see who spent it.
 - **Bottleneck visibility.** Latency distributions tagged by stage,
   so you can see which step of a workflow is the slow one. Separate
   duration metric per external dependency, so you can see which
@@ -116,8 +121,10 @@ enough to run a business on:
 Downstream, once these numbers exist, you get:
 
 - **Real SLOs** — numbers you can show a customer, not vibes.
-- **A Sentry bill that doesn't balloon as you add services**, because
-  the rules block the patterns that explode the bill.
+- **A Sentry bill that doesn't balloon as you add services.** Sentry
+  bills metrics by data volume, so the rules cap the things that
+  multiply volume: emissions inside loops, unsampled hot paths,
+  bursts, and free-form text in attributes.
 - **Alert rules that match on stable values**, not on string
   fragments that change every PR.
 - **Incident queries that still return something useful six months
@@ -137,13 +144,13 @@ sentry-instrumentation/
 │   ├── metric-classes.md         # the 5 "purposes" a metric can have
 │   ├── semantic-rules.md         # counter vs gauge vs distribution
 │   ├── naming-and-lifecycle.md   # .v2 versioning + retired_at dates
-│   ├── tagging-and-cardinality.md  # safe tags + bucket functions
-│   ├── cost-model.md             # sampling, rate limits, aggregation
+│   ├── tagging-and-cardinality.md  # group-by tags vs debug context
+│   ├── cost-model.md             # what Sentry bills + volume controls
 │   ├── emission-boundaries.md    # where metrics belong in the code
 │   ├── failure-taxonomy.md       # the closed failure-class list
 │   ├── surface-patterns.md       # 6 drop-in code patterns
 │   ├── ai-agent-conversations.md # gen_ai.* tracing for AI agents
-│   ├── enforcement.md            # the 13-check CI gate
+│   ├── enforcement.md            # the 14-check CI gate
 │   └── review-rubric.md          # the PR checklist
 ├── examples/python/              # Python reference implementation
 │   ├── metric_def.py             # MetricDef + 5 constructors
@@ -156,8 +163,10 @@ sentry-instrumentation/
 │   ├── retry_loop.py             # retry_with_instrumentation
 │   ├── fallback_path.py          # record_fallback
 │   ├── ai_agent_spans.py         # gen_ai.* spans for AI agent conversations
-│   ├── ci_gate.py                # 13-check AST gate
-│   └── test_gates.py             # pytest contract cases
+│   ├── ci_gate.py                # 14-check AST gate
+│   ├── test_gates.py             # pytest contract cases
+│   ├── test_ci_gate.py           # tests for the gate itself
+│   └── conftest.py               # makes the examples runnable here
 └── adapters/                     # one install guide per agent
     ├── claude-code.md  · claude-ai-web.md  · cursor.md
     ├── codex.md        · aider.md          · continue.md
@@ -172,28 +181,32 @@ load on demand, only for the task at hand.
 ## The five ideas, in plain words
 
 1. **Charter — the six rules.** Every metric has to be: meaningful
-   (you can say what it measures in one sentence), bounded (tag
-   values come from a short list, not free-form strings), enforceable
+   (you can say what it measures in one sentence), bounded (the tags
+   you group by come from a short list, not free-form strings; ids go
+   in declared context), enforceable
    (defined once, checked by CI), versioned (rename = new name, not
-   a silent change), cost-aware (it can't explode your bill inside a
-   loop), and easy to use (the right way is also the shortest way to
+   a silent change), cost-aware (it can't multiply your billed volume
+   inside a loop), and easy to use (the right way is also the shortest way to
    type). Rejecting raw strings as tags isn't picky — it's the
    difference between a stable dashboard and one that goes to zero
    the next time someone changes an error message.
 
 2. **Signal model — how metrics are defined.** Every metric is a
    `MetricDef` with fixed fields (name, what it measures, unit, the
-   allowed tags, the cost shape, when to retire it). You build one
+   allowed tags, the allowed context ids, the cost shape, when to
+   retire it). You build one
    through one of five shortcuts — `counter`, `latency`, `gauge`,
    `resource`, `failure_counter` — each of which fills in the boring
    fields for you, so the code at the call site only specifies what
    actually varies.
 
-3. **Cost model — how not to blow up the bill.** Every metric
-   declares how often it should fire, whether to sample on hot
-   paths, and whether it's allowed inside loops. A counter inside a
-   10,000-iteration loop emits **once**, not 10,000 times. Bursts
-   get capped. Your Sentry bill stays predictable as the app grows.
+3. **Cost model — how not to blow up the bill.** Sentry bills
+   metrics per GB of data, and its Spike Protection doesn't cover
+   them. So every metric declares how often it should fire, whether
+   to sample on hot paths, and whether it's allowed inside loops. A
+   counter inside a 10,000-iteration loop emits **once**, not 10,000
+   times. Bursts get capped. Your Sentry bill stays predictable as
+   the app grows.
 
 4. **Surface patterns — drop-in code for the six common places.**
    HTTP route, external API client, workflow step, retry loop,
@@ -203,7 +216,7 @@ load on demand, only for the task at hand.
    route gets instrumentation by mounting the middleware, not by
    copy-pasting emission code into every handler.
 
-5. **Enforcement — this is checked, not suggested.** A 13-check CI
+5. **Enforcement — this is checked, not suggested.** A 14-check CI
    gate + runtime validators + test contracts + a PR review checklist.
    The rules aren't aspirational. An `emit_counter("cache.hit", ...)`
    with a raw string fails the check and blocks the merge.
@@ -236,14 +249,14 @@ installer:
 ```bash
 git clone https://github.com/tortastudios/sentry-instrumentation.git
 cd sentry-instrumentation
-git checkout v1.2.0
+git checkout v2.0.0
 scripts/install.sh --agent=<agent> --project=/path/to/your/project
 ```
 
 Or add as a pinned submodule:
 
 ```bash
-git submodule add -b v1.2.0 \
+git submodule add -b v2.0.0 \
   https://github.com/tortastudios/sentry-instrumentation.git \
   vendor/sentry-instrumentation
 ```
@@ -331,17 +344,17 @@ $ python scripts/check_metrics.py \
 
 yourapp/services/orders.py:42: M002: emit_counter first arg must be
   a MetricDef symbol; got f-string.
-yourapp/shared/metrics.py:115: M006: cardinality="medium" requires a
-  justification in means=.
+yourapp/services/billing.py:57: M007: emit_counter(INVOICE_SENT): tag
+  key 'account_id' is not declared on 'billing.invoice.sent.count'.
 yourapp/workers/retry.py:88: M012: emit_counter inside for-body
   requires AggregatingCounter or escape comment.
 ✗ 3 violations. Merge blocked.
 ```
 
-The 13 checks are listed in `references/enforcement.md` as portable
+The 14 checks are listed in `references/enforcement.md` as portable
 rules — your TypeScript or Go port can apply the same rules with
 different tools (`ts-morph` / `ast-grep`, `go/ast`). Keep the check
-IDs (M001…M013) consistent across ports so reviewers can point at
+IDs (M001…M014) consistent across ports so reviewers can point at
 the same rule the same way in every language.
 
 ---
@@ -353,19 +366,36 @@ the same rule the same way in every language.
   old one running for 14 days with a `retired_at` date. Silent
   renames break every dashboard and alert rule that used the old
   name.
-- **Never put raw exception messages in tag values.** Use
+- **Never put raw exception messages on a metric.** Use
   `classify(exc)` to get one of ~9 `FailureClass` values. The
   `UNKNOWN` bucket is a feature, not a bug — if it starts rising,
   you've discovered a new kind of failure.
-- **High-traffic duration metrics have to sample** (`sampling_rate
-  < 1.0`). Metrics inside loops have to aggregate
-  (`AggregatingCounter` / `DurationAccumulator`). Otherwise you
-  flood Sentry.
-- **Sentry Metrics API caveats.** The examples call
-  `sentry_sdk.metrics.count/gauge/distribution`. The API has moved
-  through beta — pin `sentry-sdk>=2.0` and double-check the call
-  surface against your installed SDK. See
-  `examples/python/README.md` for the tested version.
+- **High-cardinality ids are allowed, as context.** Sentry's
+  Application Metrics stores full events, so `account_id` or
+  `project_id` on a metric is queryable and doesn't create a billable
+  series. Declare them with `context=`; keep `tags=` for the closed
+  lists you group and alert on. Context isn't free — Sentry bills by
+  data volume and says high-cardinality attributes "inflate metric
+  volume" — so declare the few ids you'd actually search by.
+- **`user.*` attributes depend on your PII setting.** The SDK adds
+  `user.id`, `user.name` and `user.email` to metrics only when a user
+  is set on the scope and user-info collection is on
+  (`send_default_pii=True` or `data_collection={"user_info": True}`).
+- **High-traffic duration metrics should sample** (`sampling_rate
+  < 1.0`). Sampling keeps percentiles honest but under-reports
+  `count()` and `sum()`, so take volumes from the paired counter.
+  Metrics inside loops have to aggregate (`AggregatingCounter` /
+  `DurationAccumulator`).
+- **Sentry SDK version.** The examples call
+  `sentry_sdk.metrics.count/gauge/distribution(name, value, unit=,
+  attributes=)`. Sentry's docs require `sentry-sdk` 2.44.0+ for
+  metrics and 2.64.0+ for Conversations. The examples are tested on
+  **2.75.0** (`examples/python/requirements-dev.txt`).
+- **What we could not verify.** Sentry doesn't publish how many bytes
+  a metric event or an attribute costs, any limit on attribute count
+  or size, or whether Conversations is beta or GA. The docs make no
+  numeric claims about those. The full source-by-source audit is in
+  `docs/application-metrics-audit.md`.
 - **The reference examples need Python 3.11+** (uses `StrEnum` and
   the `X | Y` type syntax). TypeScript and Go ports are on the
   roadmap.

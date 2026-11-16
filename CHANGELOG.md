@@ -10,6 +10,81 @@ version numbers follow [SemVer](https://semver.org/spec/v2.0.0.html).
 - `adapters/continue.md` + `adapters/windsurf.md` field-testing.
 - `ci/` workflow templates for GitHub Actions, GitLab CI, pre-commit.
 
+## [2.0.0] — 2026-11-16
+
+Aligns the skill with Sentry's Application Metrics model. **Breaking**
+for projects that copied the Python reference: see "behaviour of the
+Python reference" below, in particular the latency unit default.
+
+### Changed — aligned with Sentry's Application Metrics model
+
+The skill was written against a time-series cost model (one billable
+series per distinct tag combination). Sentry's Application Metrics
+stores full events and bills by data volume. Full source-by-source
+audit: [`docs/application-metrics-audit.md`](docs/application-metrics-audit.md).
+
+- **New attribute model.** `tags=` stays a closed set (group-by
+  dimensions for dashboards and alerts). New `context=` on every
+  `MetricDef` constructor and every `emit_*` helper carries declared,
+  free-valued debug ids (`account_id`, `project_id`, …).
+  High-cardinality ids are no longer banned from metrics; they are
+  banned from `tags=`. Free-form text, exception strings and personal
+  data remain banned in both roles.
+- **Rationale rewritten** in `README.md`, `SKILL.md`, `charter.md`,
+  `tagging-and-cardinality.md`, `cost-model.md`: closed tags are about
+  alert and dashboard stability, not series cost. The "user ID as a tag
+  raises the bill 30% a month" example is removed. `cost-model.md` now
+  states what Sentry bills (5 GB included, then $0.50/GB; Spike
+  Protection does not cover metrics), with links.
+- **SDK version.** Minimum is `sentry-sdk` 2.44.0 for metrics and
+  2.64.0 for Conversations (was "`>=2.0`"). Tested version pinned:
+  `sentry-sdk==2.75.0`.
+- **`ai-agent-conversations.md` / `ai_agent_spans.py`:** doc links and
+  product location updated (Explore → Agents → Conversations);
+  deprecated token attributes replaced
+  (`gen_ai.usage.cache_read.input_tokens`,
+  `gen_ai.usage.reasoning.output_tokens`); unsourced "beta" label and
+  cost formula removed; privacy and span-API notes added.
+
+### Changed — behaviour of the Python reference (breaking)
+
+- `MetricDef.latency` sends unit `"millisecond"` by default (was
+  `"ms"`). Pass `unit="ms"` to keep an existing metric unchanged — the
+  unit is part of a metric's identity.
+- Sampling is uniform random per emission. The previous tag-hash scheme
+  dropped whole tag combinations, and the documented "reweighting" never
+  existed.
+- Rate-limit drops are reported as one
+  `instrumentation.rate_limit.drop_count` event per metric per window,
+  not one `instrumentation.violation.count` event per drop. New
+  `flush_rate_limit_drops()`.
+- `instrumentation.violation.count`'s `rule` attribute is a fixed code,
+  not the error message.
+- `emit_counter` on a failure counter without `failure_class` now
+  raises (documented before, not enforced).
+- `init_sentry`: top-level `enable_logs=True`; `before_send_metric`
+  kill switch (`DROPPED_METRIC_NAMES`); integrations imported lazily;
+  the deprecated `send_default_pii` option is no longer passed.
+- The approved bucket functions are pre-registered, so bucket-constrained
+  metrics no longer fail validation out of the box.
+
+### Changed — CI gate
+
+- **M014 (new):** context attributes are declared and safe.
+- **M007, M010, M011:** now implemented (they were documented but not
+  coded). M010/M011 need `--baseline <registry file from main>`.
+- **M012:** honours `loop_policy` (`"allowed"` passes; `"forbidden"`
+  ignores the aggregator and the escape comment).
+- Test files and the emission module's own forwarding calls are no
+  longer flagged.
+- No check ID retired or renumbered.
+
+### Added
+
+- `examples/python/conftest.py`, `requirements-dev.txt`,
+  `test_ci_gate.py`. `pytest examples/python` now runs the reference
+  gates against the real example code (they could not run before).
+
 ## [1.2.0] — 2026-06-19
 
 First **tracing** surface. The skill, previously Metrics-only, now also

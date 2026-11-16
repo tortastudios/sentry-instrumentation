@@ -10,7 +10,12 @@ Invocation:
     python scripts/check_metrics.py \\
         --registry yourapp/shared/metrics.py \\
         --emission-module yourapp/observability.py \\
-        --project-root yourapp
+        --project-root yourapp \\
+        [--baseline /tmp/metrics_main.py]
+
+`--baseline` is the registry file as it exists on the main branch
+(`git show origin/main:yourapp/shared/metrics.py > /tmp/metrics_main.py`).
+Checks 10 and 11 only run when it is given.
 
 Exit code is non-zero on any violation. Run locally via your
 project's check loop (`make check`, `npm run lint`, `pre-commit`,
@@ -18,12 +23,12 @@ project's check loop (`make check`, `npm run lint`, `pre-commit`,
 required status.
 
 Language portability: this reference is a Python `ast`-based
-implementation. The same 13 checks port directly to `ts-morph`/
+implementation. The same 14 checks port directly to `ts-morph`/
 `ast-grep` (TypeScript), `go/ast` (Go), `parser` (Ruby), or any
 language with a first-party AST. Keep the check identifiers (M001 …
-M013) so reviewers can reference them identically across ports.
+M014) so reviewers can reference them identically across ports.
 
-The 13 checks (mirroring the enforcement reference):
+The 14 checks (mirroring the enforcement reference):
 
   1.  `sentry_sdk.metrics.*` called outside the emission module.
   2.  `emit_*` whose first positional argument is not a `MetricDef`
@@ -32,20 +37,26 @@ The 13 checks (mirroring the enforcement reference):
   4.  Duplicate metric name in the registry.
   5.  Metric name failing the naming regex.
   6.  `cardinality="medium"` without a justification line in `means=`.
-  7.  Tag key outside the metric's `allowed_tags` at a call site
-      (best-effort — only checked when tags is a dict literal).
+  7.  Group-by tag key outside the metric's `tags=` at a call site
+      (best-effort — only checked when `tags=` is a dict literal and
+      the metric symbol resolves to a definition).
   8.  Deprecated `MetricDef` with no `replaced_by` or no `retired_at`.
   9.  `retired_at` in the past on a still-present entry.
   10. Identity-tuple change on an existing `MetricDef`
       (diff vs. baseline — optional, requires --baseline).
   11. Non-deprecated entry removed from the registry (requires
       --baseline).
-  12. `emit_counter`/`emit_distribution` inside a `for`/`while` body
-      for a metric whose `loop_policy != "allowed"`, unless wrapped in
+  12. `emit_*` inside a `for`/`while` body for a metric whose
+      `loop_policy != "allowed"`, unless wrapped in
       `AggregatingCounter` / `DurationAccumulator` / bears the escape
-      comment `# instrumentation: loop-aggregate`.
+      comment `# instrumentation: loop-aggregate`. `"forbidden"`
+      ignores both escapes.
   13. Dynamic metric name (`.name` field assembled at runtime — any
       non-constant expression as the first argument to a classmethod).
+  14. Debug-context attributes: a `context=` declaration that is not a
+      literal collection of strings, that repeats a tag key, or that
+      names a forbidden / reserved key; and a `context=` key at a call
+      site that the metric does not declare.
 """
 
 from __future__ import annotations
@@ -89,6 +100,17 @@ AGGREGATORS: frozenset[str] = frozenset({
 
 LOOP_AGGREGATE_ESCAPE = "instrumentation: loop-aggregate"
 
+# Mirror of `FORBIDDEN_CONTEXT_KEYS` / `RESERVED_CONTEXT_PREFIXES` in
+# the registry module — free-form text and direct personal data never
+# go on a metric; `sentry.*` / `user.*` are filled in by the SDK.
+FORBIDDEN_CONTEXT_KEYS: frozenset[str] = frozenset({
+    "email", "user_email", "ip", "ip_address", "user_agent",
+    "prompt", "completion", "message", "body", "text",
+    "error", "error_message", "exception", "stack", "stacktrace",
+    "url", "raw_url", "query", "query_string", "path",
+})
+RESERVED_CONTEXT_PREFIXES: tuple[str, ...] = ("sentry.", "user.")
+
 
 # --- Data types ------------------------------------------------------------
 
@@ -110,6 +132,71 @@ class RegistryEntry:
     classmethod: str
     line: int
     kwargs: dict[str, ast.expr] = field(default_factory=dict)
+    symbol: str | None = None  # module-level name the MetricDef is bound to
+
+    @property
+    def tag_keys(self) -> frozenset[str] | None:
+        """Declared tag keys, or None when `tags=` isn't a literal dict."""
+
+        tags = self.kwargs.get("tags")
+        if tags is None:
+            keys: set[str] = set()
+        elif isinstance(tags, ast.Dict) and all(
+            isinstance(k, ast.Constant) and isinstance(k.value, str)
+            for k in tags.keys
+        ):
+            keys = {k.value for k in tags.keys}  # type: ignore[union-attr]
+        else:
+            return None
+        if self.classmethod == "failure_counter":
+            keys.add("failure_class")
+        return frozenset(keys)
+
+    @property
+    def context_keys(self) -> frozenset[str] | None:
+        """Declared context keys, or None when `context=` isn't a literal."""
+
+        return _literal_str_collection(self.kwargs.get("context"))
+
+    @property
+    def loop_policy(self) -> str:
+        policy = self.kwargs.get("loop_policy")
+        if isinstance(policy, ast.Constant) and isinstance(policy.value, str):
+            return policy.value
+        return "aggregate_only"
+
+    @property
+    def is_deprecated(self) -> bool:
+        deprecated = self.kwargs.get("deprecated")
+        return bool(isinstance(deprecated, ast.Constant) and deprecated.value)
+
+    def identity(self) -> tuple[str, ...]:
+        """Comparable form of (kind, unit, purpose, tags) for check 10."""
+
+        def dump(key: str) -> str:
+            node = self.kwargs.get(key)
+            return ast.dump(node) if node is not None else ""
+
+        return (self.classmethod, dump("unit"), dump("purpose"), dump("tags"))
+
+
+def _literal_str_collection(node: ast.expr | None) -> frozenset[str] | None:
+    """Resolve `{"a", "b"}` / `["a"]` / `("a",)` / `frozenset({...})`."""
+
+    if node is None:
+        return frozenset()
+    if (
+        isinstance(node, ast.Call)
+        and _simple_name(node.func) in {"frozenset", "set"}
+        and len(node.args) <= 1
+        and not node.keywords
+    ):
+        return _literal_str_collection(node.args[0]) if node.args else frozenset()
+    if isinstance(node, (ast.Set, ast.List, ast.Tuple)) and all(
+        isinstance(e, ast.Constant) and isinstance(e.value, str) for e in node.elts
+    ):
+        return frozenset(e.value for e in node.elts)  # type: ignore[attr-defined]
+    return None
 
 
 # --- Registry walk (PR-local, one file) ------------------------------------
@@ -120,9 +207,29 @@ def collect_registry(
 ) -> tuple[list[RegistryEntry], list[Violation]]:
     """Parse the registry file and extract every `MetricDef.<cls>(...)` call."""
 
-    tree = ast.parse(path.read_text(), filename=str(path))
+    return _collect_from_tree(ast.parse(path.read_text(), filename=str(path)), path)
+
+
+def _collect_from_tree(
+    tree: ast.AST, path: Path
+) -> tuple[list[RegistryEntry], list[Violation]]:
     entries: list[RegistryEntry] = []
     violations: list[Violation] = []
+
+    # Map each MetricDef call to the name it is assigned to
+    # (`CACHE_HIT = MetricDef.counter(...)`), so call sites can be
+    # resolved back to their definition.
+    # Module level only: a local `m = MetricDef...` inside a function
+    # is not a stable symbol.
+    symbol_by_call: dict[int, str] = {}
+    for node in getattr(tree, "body", []):
+        target: ast.expr | None = None
+        if isinstance(node, ast.Assign) and len(node.targets) == 1:
+            target = node.targets[0]
+        elif isinstance(node, ast.AnnAssign):
+            target = node.target
+        if isinstance(target, ast.Name) and node.value is not None:  # type: ignore[union-attr]
+            symbol_by_call[id(node.value)] = target.id  # type: ignore[union-attr]
 
     for node in ast.walk(tree):
         if not isinstance(node, ast.Call):
@@ -166,6 +273,7 @@ def collect_registry(
                 classmethod=classmethod_name,
                 line=node.lineno,
                 kwargs=kwargs,
+                symbol=symbol_by_call.get(id(node)),
             )
         )
 
@@ -175,7 +283,7 @@ def collect_registry(
 def check_registry(
     path: Path, entries: list[RegistryEntry]
 ) -> list[Violation]:
-    """Checks 3, 4, 5, 6, 8, 9."""
+    """Checks 3, 4, 5, 6, 8, 9, and the registry half of 14."""
 
     violations: list[Violation] = []
     seen_names: dict[str, int] = {}
@@ -235,6 +343,41 @@ def check_registry(
                     )
                 )
 
+        # 14. Context declaration is literal, disjoint from tags, and safe.
+        context_keys = entry.context_keys
+        if context_keys is None:
+            violations.append(
+                Violation(
+                    path, entry.line, "M014",
+                    f"Metric {entry.name!r}: context= must be a literal "
+                    f"collection of string keys.",
+                )
+            )
+        else:
+            overlap = context_keys & (entry.tag_keys or frozenset())
+            if overlap:
+                violations.append(
+                    Violation(
+                        path, entry.line, "M014",
+                        f"Metric {entry.name!r}: {sorted(overlap)} declared "
+                        f"as both a tag and a context attribute.",
+                    )
+                )
+            bad = sorted(
+                k for k in context_keys
+                if k in FORBIDDEN_CONTEXT_KEYS
+                or k.startswith(RESERVED_CONTEXT_PREFIXES)
+            )
+            if bad:
+                violations.append(
+                    Violation(
+                        path, entry.line, "M014",
+                        f"Metric {entry.name!r}: context keys {bad} are not "
+                        f"allowed (free-form text, personal data, or an "
+                        f"SDK-reserved namespace).",
+                    )
+                )
+
         # 8 & 9. Lifecycle.
         deprecated = entry.kwargs.get("deprecated")
         deprecated_value = (
@@ -280,13 +423,44 @@ def check_registry(
     return violations
 
 
+def check_baseline(
+    path: Path, entries: list[RegistryEntry], baseline: list[RegistryEntry]
+) -> list[Violation]:
+    """Checks 10 and 11 — compare against the main-branch registry."""
+
+    violations: list[Violation] = []
+    current = {entry.name: entry for entry in entries}
+    for old in baseline:
+        new = current.get(old.name)
+        if new is None:
+            if not old.is_deprecated:
+                violations.append(
+                    Violation(
+                        path, 1, "M011",
+                        f"Metric {old.name!r} was removed without first being "
+                        f"deprecated (deprecated=True + retired_at).",
+                    )
+                )
+        elif new.identity() != old.identity():
+            violations.append(
+                Violation(
+                    path, new.line, "M010",
+                    f"Metric {old.name!r} changed kind, unit, purpose, or "
+                    f"tags in place — register a new versioned name instead.",
+                )
+            )
+    return violations
+
+
 # --- Call-site walk --------------------------------------------------------
 
 
 def iter_py_files(root: Path) -> Iterator[Path]:
     for path in root.rglob("*.py"):
-        # Skip migrations, tests for direct emission checks if desired.
         if any(part in {"migrations", ".venv", "__pycache__"} for part in path.parts):
+            continue
+        # Tests misuse the helpers on purpose to prove they raise.
+        if path.name.startswith("test_") or path.name == "conftest.py":
             continue
         yield path
 
@@ -294,15 +468,10 @@ def iter_py_files(root: Path) -> Iterator[Path]:
 def check_call_sites(
     root: Path, emission_module: Path, entries: list[RegistryEntry]
 ) -> list[Violation]:
-    """Checks 1, 2, 7, 12, 13."""
+    """Checks 1, 2, 7, 12, and the call-site half of 14."""
 
     violations: list[Violation] = []
-    loop_policy_by_name: dict[str, str] = {}
-    for entry in entries:
-        policy = entry.kwargs.get("loop_policy")
-        loop_policy_by_name[entry.name] = (
-            policy.value if isinstance(policy, ast.Constant) else "aggregate_only"
-        )
+    registry_symbols = {e.symbol: e for e in entries if e.symbol}
 
     for path in iter_py_files(root):
         try:
@@ -312,6 +481,14 @@ def check_call_sites(
             continue
 
         source_lines = source.splitlines()
+
+        # Metric symbols visible here: the registry's, plus any defined
+        # in this file (surface patterns define theirs next to the code).
+        local_entries, _ = _collect_from_tree(tree, path)
+        symbols = {
+            **registry_symbols,
+            **{e.symbol: e for e in local_entries if e.symbol},
+        }
 
         # Build parent and loop-depth maps via a single walker.
         for parent in ast.walk(tree):
@@ -334,6 +511,11 @@ def check_call_sites(
                         "emission module — use emit_* wrappers.",
                     )
                 )
+
+            # The emission module implements the helpers; its internal
+            # `emit_counter(self.metric, ...)` forwarding is not a call site.
+            if path.resolve() == emission_module.resolve():
+                continue
 
             func_name = _simple_name(node.func)
 
@@ -358,24 +540,36 @@ def check_call_sites(
                             )
                         )
 
+                    resolved = (
+                        symbols.get(first.id) if isinstance(first, ast.Name) else None
+                    )
+                    if resolved is not None:
+                        violations.extend(
+                            _check_attribute_keys(path, node, func_name, resolved)
+                        )
+
                 # 12. Loop-policy check.
                 if _inside_loop(node) and isinstance(node.args[0] if node.args else None, ast.Name):
                     metric_sym = node.args[0].id  # type: ignore[union-attr]
-                    # Try to resolve to a registry entry by symbol name —
-                    # best-effort: we trust the convention that the
-                    # SCREAMING_SNAKE symbol name maps 1:1 to a registry
-                    # entry. Real implementations can load the registry
-                    # module and introspect.
-                    # If not resolvable we fall through (registry-only
-                    # symbols get enforced when this is run with the
-                    # actual registry module imported).
+                    entry = symbols.get(metric_sym)
+                    # Unresolvable symbols are treated as the default
+                    # policy ("aggregate_only").
+                    policy = entry.loop_policy if entry else "aggregate_only"
+                    if policy == "allowed":
+                        continue
+                    if policy == "forbidden":
+                        violations.append(
+                            Violation(
+                                path, node.lineno, "M012",
+                                f"{func_name}({metric_sym}) inside a loop — "
+                                f"loop_policy='forbidden' for this metric.",
+                            )
+                        )
+                        continue
                     if _has_escape_comment(source_lines, node.lineno):
                         continue
                     if _wrapped_in_aggregator(node):
                         continue
-                    # Conservative: flag unless we can prove loop_policy == "allowed".
-                    # (A real gate would look up by metric_sym; here we
-                    # flag any unwrapped emit inside a loop.)
                     violations.append(
                         Violation(
                             path, node.lineno, "M012",
@@ -385,6 +579,34 @@ def check_call_sites(
                         )
                     )
 
+    return violations
+
+
+def _check_attribute_keys(
+    path: Path, call: ast.Call, func_name: str, entry: RegistryEntry
+) -> list[Violation]:
+    """Checks 7 (tags=) and 14 (context=) for one resolved emit call."""
+
+    violations: list[Violation] = []
+    for kwarg, code, declared, label in (
+        ("tags", "M007", entry.tag_keys, "tag"),
+        ("context", "M014", entry.context_keys, "context"),
+    ):
+        value = next((kw.value for kw in call.keywords if kw.arg == kwarg), None)
+        if declared is None or not isinstance(value, ast.Dict):
+            continue  # best-effort: literals only
+        for key in value.keys:
+            if not (isinstance(key, ast.Constant) and isinstance(key.value, str)):
+                continue
+            if key.value not in declared:
+                violations.append(
+                    Violation(
+                        path, call.lineno, code,
+                        f"{func_name}({entry.symbol}): {label} key "
+                        f"{key.value!r} is not declared on {entry.name!r} "
+                        f"(declared: {sorted(declared)}).",
+                    )
+                )
     return violations
 
 
@@ -444,11 +666,15 @@ def _wrapped_in_aggregator(node: ast.AST) -> bool:
 
 
 def _has_escape_comment(source_lines: list[str], lineno: int) -> bool:
-    # Same line or the line directly above.
-    for target in (lineno, lineno - 1):
-        if 1 <= target <= len(source_lines):
-            if LOOP_AGGREGATE_ESCAPE in source_lines[target - 1]:
-                return True
+    # Trailing comment on the same line, or a comment-only line directly
+    # above (a trailing comment on the previous statement doesn't count).
+    if 1 <= lineno <= len(source_lines):
+        if LOOP_AGGREGATE_ESCAPE in source_lines[lineno - 1]:
+            return True
+    if 2 <= lineno <= len(source_lines) + 1:
+        above = source_lines[lineno - 2].strip()
+        if above.startswith("#") and LOOP_AGGREGATE_ESCAPE in above:
+            return True
     return False
 
 
@@ -460,6 +686,10 @@ def main(argv: Iterable[str] | None = None) -> int:
     parser.add_argument("--registry", type=Path, required=True)
     parser.add_argument("--emission-module", type=Path, required=True)
     parser.add_argument("--project-root", type=Path, required=True)
+    parser.add_argument(
+        "--baseline", type=Path, default=None,
+        help="Registry file from the main branch; enables checks M010/M011.",
+    )
     args = parser.parse_args(list(argv) if argv is not None else None)
 
     entries, v1 = collect_registry(args.registry)
@@ -467,6 +697,9 @@ def main(argv: Iterable[str] | None = None) -> int:
     v3 = check_call_sites(args.project_root, args.emission_module, entries)
 
     violations = v1 + v2 + v3
+    if args.baseline is not None:
+        baseline_entries, _ = collect_registry(args.baseline)
+        violations += check_baseline(args.registry, entries, baseline_entries)
     for v in violations:
         sys.stdout.write(v.format() + "\n")
 

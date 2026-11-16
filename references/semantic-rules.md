@@ -16,7 +16,7 @@ the CI gate rejects violations at merge time.
   events".
 - Never a state snapshot. Never a current value. Never a rate.
 - Unit is `"count"` (for `outcome` counters) or a consumable-resource
-  unit like `"units"`, `"tokens"`, `"bytes"` (for `resource` counters).
+  unit like `"units"`, `"tokens"`, `"byte"` (for `resource` counters).
 - Use `emit_counter(metric, tags=..., value=1.0)` — or, inside a
   loop, wrap in `AggregatingCounter`.
 
@@ -24,22 +24,30 @@ the CI gate rejects violations at merge time.
 
 - **Current measured state.** Each emission replaces (or is sampled
   as) the current value.
+- **No percentiles.** Sentry aggregates gauges with `min`, `max`,
+  `avg` (plus rates); only distributions give p50/p75/p90/p95/p99.
+  Sentry's rule of thumb: "Gauges are more space-efficient; pick them
+  when you do not need percentiles"
+  ([Python docs](https://docs.sentry.io/platforms/python/metrics/)).
 - Never cumulative. Never a rate. If "the number only ever goes up",
   it's a counter.
-- Must have a unit — `"items"`, `"bytes"`, `"seconds"`, etc.
+- Must have a unit — `"items"`, `"byte"`, `"second"`, etc.
 - Typical `emit_frequency="periodic"`; sampled on a schedule or at a
   meaningful lifecycle boundary (queue drained, pool grown).
 - Use `emit_gauge(metric, tags=..., value=...)`.
 
 ## `distribution`
 
-- **Sampled measurements** — latency, size, duration. A percentile
-  engine downstream aggregates into p50/p95/p99.
+- **A population of measured values** — latency, size, duration.
+  Sentry computes `p50`, `p75`, `p90`, `p95`, `p99`, `avg`, `sum`,
+  `min`, `max` and `count` over the stored events.
 - Never a count in disguise. A distribution of `value=1.0` for every
   event is an abuse; use a counter.
-- **Unit is mandatory.** Duration metrics are always `"ms"`.
+- **Unit is mandatory.** Duration metrics are always measured in
+  milliseconds and sent with unit `"millisecond"` (or the legacy
+  `"ms"` for metrics registered earlier — see `signal-model.md`).
 - Duration metrics must go through `MetricDef.latency(...)` (which
-  fixes `kind="distribution"`, `unit="ms"`, `purpose="latency"`). The
+  fixes `kind="distribution"`, `purpose="latency"`). The
   start→stop boundary lives in `operational_meaning`. Different
   boundary = different metric.
 - Use `emit_latency(metric, duration_ms=..., tags=...)` or the
@@ -56,8 +64,8 @@ A special case of `counter`:
   `FailureClass` taxonomy.
 - Emitted only via
   `emit_failure(metric, failure=classify(exc), tags=...)`. Do not
-  pass `str(exc)` or `type(exc).__name__` as a tag — cardinality
-  explodes, downstream alerts can't match.
+  pass `str(exc)` or `type(exc).__name__` as a tag — downstream
+  alerts can't match on it and group-bys become unreadable.
 - The `UNKNOWN` bucket is expected. Its rate is its own SLI. Do not
   suppress it.
 
