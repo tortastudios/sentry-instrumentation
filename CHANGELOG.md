@@ -10,6 +10,12 @@ version numbers follow [SemVer](https://semver.org/spec/v2.0.0.html).
 - `adapters/continue.md` + `adapters/windsurf.md` field-testing.
 - `ci/` workflow templates for GitHub Actions, GitLab CI, pre-commit.
 
+## [2.0.0] — 2026-11-16
+
+Aligns the skill with Sentry's Application Metrics model. **Breaking**
+for projects that copied the Python reference: see "behaviour of the
+Python reference" below, in particular the latency unit default.
+
 ### Changed — aligned with Sentry's Application Metrics model
 
 The skill was written against a time-series cost model (one billable
